@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.DS_Store
+data/processed/*
+data/outputs/*
+# Keep raw government-derived files out of git unless your team explicitly wants to version them.
+data/raw/*.csv
