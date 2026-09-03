@@ -1,25 +1,24 @@
 from pathlib import Path
-
 ROOT = Path(__file__).resolve().parent
-DATA_DIR = ROOT / "data"
-RAW_DIR = DATA_DIR / "raw"
-PROCESSED_DIR = DATA_DIR / "processed"
-OUTPUT_DIR = DATA_DIR / "outputs"
-
-RECOMMENDED_FILE = RAW_DIR / "mplads_recommended_works_2026-08-23.csv"
-COMPLETED_FILE = RAW_DIR / "mplads_completed_works_2026-08-23.csv"
-EXPENDITURE_FILE = RAW_DIR / "mplads_expenditures_2026-08-23.csv"
-MP_SUMMARY_FILE = RAW_DIR / "mplads_mp_summary_2026-08-23.csv"
-
-# Matching thresholds are intentionally conservative.
-TIER1_THRESHOLD = 82.0
-TIER2_THRESHOLD = 68.0
-MIN_MARGIN = 6.0
-MAX_CANDIDATES_PER_REC = 12
+DATA_DIR = ROOT / 'data'
+RAW_DIR = DATA_DIR / 'raw'
+PROCESSED_DIR = DATA_DIR / 'processed'
+OUTPUT_DIR = DATA_DIR / 'outputs'
+REVIEW_DIR = OUTPUT_DIR / 'review'
+RECOMMENDED_FILE = RAW_DIR / 'mplads_recommended_works_2026-08-23.csv'
+COMPLETED_FILE = RAW_DIR / 'mplads_completed_works_2026-08-23.csv'
+EXPENDITURE_FILE = RAW_DIR / 'mplads_expenditures_2026-08-23.csv'
+MP_SUMMARY_FILE = RAW_DIR / 'mplads_mp_summary_2026-08-23.csv'
+TIER1_THRESHOLD = 86.0
+TIER2_THRESHOLD = 76.0
+MIN_MARGIN = 7.0
+MAX_CANDIDATES_PER_REC = 8
 DATE_WINDOW_DAYS = 900
-
-# Risk thresholds are in risk-score points, not probabilities of fraud.
+TIER1_DESC_FLOOR = 88.0
+TIER2_DESC_FLOOR = 75.0
+STRONG_CONTEXT_THRESHOLD = 95.0
+CONTRADICTION_IDA_PENALTY = 12.0
+CONTRADICTION_CATEGORY_PENALTY = 6.0
 HIGH_RISK = 70.0
 MEDIUM_RISK = 45.0
-
 RANDOM_STATE = 42

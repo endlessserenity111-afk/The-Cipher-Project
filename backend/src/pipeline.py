@@ -13,6 +13,7 @@ from .anomaly_detection import add_statistical_anomalies, add_isolation_forest
 from .risk_scoring import score_projects, score_mp_indicators
 from .aggregations import state_rollup, category_rollup, district_rollup
 from .validation import validate_projects, validate_matches
+from .match_review import build_review_samples
 
 
 def standardize_recommendations(df):
@@ -78,6 +79,7 @@ def run_pipeline() -> dict:
     write_csv(matches, OUTPUT_DIR / "match_results.csv")
     match_validation = validate_matches(matches)
     write_csv(match_validation, OUTPUT_DIR / "match_validation.csv")
+    review_summary = build_review_samples(matches, rec, comp, OUTPUT_DIR / "review")
 
     projects = build_project_features(rec, comp, matches)
     if projects.empty:
@@ -107,6 +109,7 @@ def run_pipeline() -> dict:
         "high_risk_projects": int((projects["risk_level"]=="HIGH").sum()),
         "medium_risk_projects": int((projects["risk_level"]=="MEDIUM").sum()),
         "low_risk_projects": int((projects["risk_level"]=="LOW").sum()),
+        "review": review_summary,
         "notes": "Risk flags are anomaly/risk indicators, not proof or probability of fraud. Expenditure evidence is aggregated at MP/IDA level because expenditure data lacks Work ID.",
     }
     with open(OUTPUT_DIR / "pipeline_summary.json", "w", encoding="utf-8") as f:

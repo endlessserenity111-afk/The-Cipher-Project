@@ -25,13 +25,14 @@ def main():
             from src.expenditure_checks import build_mp_indicators
             from src.aggregations import state_rollup, category_rollup, district_rollup
             from src.validation import validate_projects, validate_matches
+            from src.match_review import build_review_samples
             ensure_dirs(config.RAW_DIR, config.PROCESSED_DIR, config.OUTPUT_DIR)
             rec=standardize_recommendations(read_csv(config.RECOMMENDED_FILE).head(args.limit))
             comp=standardize_completions(read_csv(config.COMPLETED_FILE))
             exp=standardize_expenditures(read_csv(config.EXPENDITURE_FILE))
             summ=standardize_mp_summary(read_csv(config.MP_SUMMARY_FILE))
             write_csv(build_quality_report({"recommendations":rec,"completions":comp,"expenditures":exp,"mp_summary":summ}),config.OUTPUT_DIR/"data_quality_report.csv")
-            matches=match_records(rec,comp); write_csv(matches,config.OUTPUT_DIR/"match_results.csv"); write_csv(validate_matches(matches),config.OUTPUT_DIR/"match_validation.csv")
+            matches=match_records(rec,comp); write_csv(matches,config.OUTPUT_DIR/"match_results.csv"); write_csv(validate_matches(matches),config.OUTPUT_DIR/"match_validation.csv"); review_summary=build_review_samples(matches,rec,comp,config.OUTPUT_DIR/"review")
             projects=build_project_features(rec,comp,matches)
             if projects.empty: raise RuntimeError("No project matches passed the threshold on this sample.")
             projects=score_projects(add_isolation_forest(add_statistical_anomalies(projects)))
@@ -40,7 +41,7 @@ def main():
             mp=score_mp_indicators(build_mp_indicators(exp,projects)); write_csv(mp,config.OUTPUT_DIR/"mp_risk_indicators.csv")
             write_csv(state_rollup(projects),config.OUTPUT_DIR/"state_rollup.csv"); write_csv(category_rollup(projects),config.OUTPUT_DIR/"category_rollup.csv"); write_csv(district_rollup(projects),config.OUTPUT_DIR/"constituency_rollup.csv")
             write_csv(validate_projects(projects),config.OUTPUT_DIR/"project_validation.csv")
-            out={"mode":"limited","limit":args.limit,"recommendations":len(rec),"completed_works":len(comp),"tier1_matches":int((matches.match_tier=="Tier 1").sum()),"tier2_matches":int((matches.match_tier=="Tier 2").sum()),"unmatched":int((matches.match_tier=="Unmatched").sum()),"high_risk_projects":int((projects.risk_level=="HIGH").sum())}
+            out={"mode":"limited","limit":args.limit,"recommendations":len(rec),"completed_works":len(comp),"tier1_matches":int((matches.match_tier=="Tier 1").sum()),"tier2_matches":int((matches.match_tier=="Tier 2").sum()),"unmatched":int((matches.match_tier=="Unmatched").sum()),"high_risk_projects":int((projects.risk_level=="HIGH").sum()),"review":review_summary}
             with open(config.OUTPUT_DIR/"pipeline_summary.json","w",encoding="utf-8") as f: json.dump(out,f,indent=2)
             return out
         summary=limited_run()
