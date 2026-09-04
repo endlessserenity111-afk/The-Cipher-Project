@@ -53,6 +53,8 @@ def score_projects(df: pd.DataFrame) -> pd.DataFrame:
             s += 8; ev.append(f"Duration is about {dur_ratio:.1f}x the peer median")
         if bool(r.get("ml_anomaly_flag")):
             s += 15; ev.append("Isolation Forest detected an unusual multi-feature profile")
+        if r.get("has_images") is False:
+            s += 12; ev.append("Completed work has no photographic proof of completion")
 
         tier = str(r.get("match_tier", "Unmatched"))
         if tier == "Tier 2":

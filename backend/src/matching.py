@@ -39,6 +39,55 @@ def _anchor_overlap(a,b):
     if not aa or not bb:return 0.0
     return 100.0*len(aa&bb)/max(1,min(len(aa),len(bb)))
 
+# Location-number contradiction detection.
+# Recognised keyword groups (each tuple = set of synonyms treated as one type).
+_LOC_KW_GROUPS = [
+    ('ward',),
+    ('plot',),
+    ('survey',),
+    ('phase',),
+    ('block',),
+    ('sector',),
+    ('door',),
+    ('flat',),
+    ('unit',),
+    ('part',),
+    ('house',),
+    ('no', 'number'),
+]
+# Canonical label for each keyword → group index
+_KW_TO_GROUP: dict = {}
+for _gi, _grp in enumerate(_LOC_KW_GROUPS):
+    for _kw in _grp:
+        _KW_TO_GROUP[_kw] = _gi
+
+# Pattern: optional ordinal suffix on the number, keyword after it  e.g. "13th Ward"
+_LOC_PRE_RE = re.compile(
+    r'\b(\d+)(?:st|nd|rd|th)?\s+(' + '|'.join(re.escape(k) for k in sorted(_KW_TO_GROUP, key=len, reverse=True)) + r')\b',
+    re.IGNORECASE,
+)
+# Pattern: keyword before number, with colon/dot/hyphen/space separator  e.g. "Ward 13", "survey no:782"
+_LOC_POST_RE = re.compile(
+    r'\b(' + '|'.join(re.escape(k) for k in sorted(_KW_TO_GROUP, key=len, reverse=True)) + r')\b[\s.:/-]*(\d+)',
+    re.IGNORECASE,
+)
+
+def _extract_loc_numbers(text: str) -> dict:
+    """Return {group_index: set_of_integer_numbers} found in *text*."""
+    result: dict = {}
+    txt = str(text or '')
+    for m in _LOC_PRE_RE.finditer(txt):
+        num, kw = int(m.group(1)), m.group(2).lower()
+        gi = _KW_TO_GROUP.get(kw)
+        if gi is not None:
+            result.setdefault(gi, set()).add(num)
+    for m in _LOC_POST_RE.finditer(txt):
+        kw, num = m.group(1).lower(), int(m.group(2))
+        gi = _KW_TO_GROUP.get(kw)
+        if gi is not None:
+            result.setdefault(gi, set()).add(num)
+    return result
+
 def _score(rec,comp):
     desc=_ratio(rec.get('work_norm',''),comp.get('work_norm',''))
     mp=_ratio(rec.get('mp_canonical',rec.get('mp_norm','')),comp.get('mp_canonical',comp.get('mp_norm','')))
@@ -55,6 +104,14 @@ def _score(rec,comp):
     for a,b,w,p in pairs:
         if rec.get(a) and comp.get(b) and rec.get(a)!=comp.get(b):score-=p;warnings.append(w)
     if anchors<30 and desc<95:score-=PENALTY_WEAK_ANCHORS;warnings.append('weak shared project tokens')
+    # Location-number contradiction detection.
+    rec_loc=_extract_loc_numbers(rec.get('work_norm','') or rec.get('work_description',''))
+    comp_loc=_extract_loc_numbers(comp.get('work_norm','') or comp.get('work_description',''))
+    for gi in set(rec_loc) & set(comp_loc):
+        if rec_loc[gi].isdisjoint(comp_loc[gi]):
+            score-=PENALTY_ENTITY_MISMATCH
+            kw_label=_LOC_KW_GROUPS[gi][0]
+            warnings.append(f'conflicting location number ({kw_label}: {sorted(rec_loc[gi])} vs {sorted(comp_loc[gi])})')
     ev={'description_similarity':round(desc,2),'mp_similarity':round(mp,2),'constituency_similarity':round(constituency,2),'state_similarity':round(state,2),'ida_similarity':round(ida,2),'category_similarity':round(category,2),'amount_similarity':round(amount,2),'timeline_match_score':round(timeline,2),'project_token_overlap':round(anchors,2)}
     return max(0.0,float(score)),ev,warnings
 
@@ -65,14 +122,19 @@ def _eligible_date(r,c):
     return -30<=d<=DATE_WINDOW_DAYS
 
 def _tier(score,margin,ev,warnings):
+    # Hard gate: final amount must be at least half the recommended amount (and no more than double).
+    if ev['amount_similarity'] < 50:
+        return 'Unmatched', 'Unmatched'
     strong=ev['mp_similarity']>=STRONG_CONTEXT_THRESHOLD and ev['state_similarity']>=STRONG_CONTEXT_THRESHOLD and ev['constituency_similarity']>=STRONG_CONTEXT_THRESHOLD
     hard=any(w in warnings for w in ('different MP','different state','different constituency'))
+    # Also treat conflicting location numbers as a hard blocker for both tiers.
+    loc_conflict=any('conflicting location number' in w for w in warnings)
     weak=ev['description_similarity']<TIER2_DESC_FLOOR or ev['project_token_overlap']<25
-    if score>=TIER1_THRESHOLD and margin>=MIN_MARGIN_TIER1 and ev['description_similarity']>=TIER1_DESC_FLOOR and strong and not hard and not weak:
+    if score>=TIER1_THRESHOLD and margin>=MIN_MARGIN_TIER1 and ev['description_similarity']>=TIER1_DESC_FLOOR and strong and not hard and not weak and not loc_conflict:
         if 'different IDA' in warnings and ev['description_similarity']<96:return 'Unmatched','Unmatched'
         if 'different category' in warnings and ev['description_similarity']<95:return 'Unmatched','Unmatched'
         return 'Tier 1','Verified'
-    if score>=TIER2_THRESHOLD and margin>=MIN_MARGIN_TIER2 and ev['description_similarity']>=TIER2_DESC_FLOOR and strong and not hard and not weak:
+    if score>=TIER2_THRESHOLD and margin>=MIN_MARGIN_TIER2 and ev['description_similarity']>=TIER2_DESC_FLOOR and strong and not hard and not weak and not loc_conflict:
         if 'different IDA' in warnings and ev['description_similarity']<90:return 'Unmatched','Unmatched'
         return 'Tier 2','Provisional'
     return 'Unmatched','Unmatched'
