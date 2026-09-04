@@ -40,7 +40,7 @@ def build_project_features(recommendations: pd.DataFrame, completions: pd.DataFr
             "match_confidence": m["match_confidence"],
             "score_margin": float(m["score_margin"]),
             "match_reason": m["match_reason"],
-            "has_images": cc.get("Has Images", cc.get("has_images", None)),
+            "has_images": cc.get("Has Images"),  # standardize_completions() keeps this column as-is
         })
     return pd.DataFrame(rows)
 
