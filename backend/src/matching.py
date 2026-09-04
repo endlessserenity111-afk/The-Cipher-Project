@@ -245,27 +245,87 @@ def _eligible_date(r,c):
     d=(cd-rd).days
     return -30<=d<=DATE_WINDOW_DAYS
 
-def _tier(score,margin,ev,warnings):
+def _tier(score, margin, ev, warnings):
+    """
+    Returns (tier, confidence, rejection_reason).
+    rejection_reason is a plain-English string explaining the first blocker that
+    prevented the candidate from being accepted, or '' when accepted.
+    """
     # Hard gate: final amount must be at least half the recommended amount (and no more than double).
     if ev['amount_similarity'] < 50:
-        return 'Unmatched', 'Unmatched'
-    strong=ev['mp_similarity']>=STRONG_CONTEXT_THRESHOLD and ev['state_similarity']>=STRONG_CONTEXT_THRESHOLD and ev['constituency_similarity']>=STRONG_CONTEXT_THRESHOLD
-    hard=any(w in warnings for w in ('different MP','different state','different constituency'))
+        return 'Unmatched', 'Unmatched', (
+            f'Amount similarity hard gate failed '
+            f'(amount_similarity={ev["amount_similarity"]:.1f} < 50 required)'
+        )
+    strong = (ev['mp_similarity'] >= STRONG_CONTEXT_THRESHOLD and
+              ev['state_similarity'] >= STRONG_CONTEXT_THRESHOLD and
+              ev['constituency_similarity'] >= STRONG_CONTEXT_THRESHOLD)
+    hard = any(w in warnings for w in ('different MP', 'different state', 'different constituency'))
     # Hard blockers for both tiers: any kind of confirmed location or project-type conflict.
-    loc_number_conflict=any('conflicting location number' in w for w in warnings)
-    loc_name_conflict='conflicting location' in warnings
-    proj_type_conflict='conflicting project type' in warnings
-    any_conflict=loc_number_conflict or loc_name_conflict or proj_type_conflict
-    weak=ev['description_similarity']<TIER2_DESC_FLOOR or ev['project_token_overlap']<25
-    if score>=TIER1_THRESHOLD and margin>=MIN_MARGIN_TIER1 and ev['description_similarity']>=TIER1_DESC_FLOOR and strong and not hard and not weak and not any_conflict:
-        if 'different IDA' in warnings and ev['description_similarity']<96:return 'Unmatched','Unmatched'
-        if 'different category' in warnings and ev['description_similarity']<95:return 'Unmatched','Unmatched'
-        return 'Tier 1','Verified'
-    # Tier 2: tighter — requires no conflict warnings and slightly stricter token overlap.
-    if score>=TIER2_THRESHOLD and margin>=MIN_MARGIN_TIER2 and ev['description_similarity']>=TIER2_DESC_FLOOR and strong and not hard and not weak and not any_conflict and ev['project_token_overlap']>=35:
-        if 'different IDA' in warnings and ev['description_similarity']<90:return 'Unmatched','Unmatched'
-        return 'Tier 2','Provisional'
-    return 'Unmatched','Unmatched'
+    loc_number_conflict = any('conflicting location number' in w for w in warnings)
+    loc_name_conflict = 'conflicting location' in warnings
+    proj_type_conflict = 'conflicting project type' in warnings
+    any_conflict = loc_number_conflict or loc_name_conflict or proj_type_conflict
+    weak = ev['description_similarity'] < TIER2_DESC_FLOOR or ev['project_token_overlap'] < 25
+
+    # --- Tier 1 check ---
+    if score >= TIER1_THRESHOLD and margin >= MIN_MARGIN_TIER1 and ev['description_similarity'] >= TIER1_DESC_FLOOR and strong and not hard and not weak and not any_conflict:
+        if 'different IDA' in warnings and ev['description_similarity'] < 96:
+            return 'Unmatched', 'Unmatched', (
+                f'IDA mismatch with insufficient description similarity for override '
+                f'(description_similarity={ev["description_similarity"]:.1f} < 96 required when IDA differs)'
+            )
+        if 'different category' in warnings and ev['description_similarity'] < 95:
+            return 'Unmatched', 'Unmatched', (
+                f'Category mismatch with insufficient description similarity for override '
+                f'(description_similarity={ev["description_similarity"]:.1f} < 95 required when category differs)'
+            )
+        return 'Tier 1', 'Verified', ''
+
+    # --- Tier 2 check ---
+    if score >= TIER2_THRESHOLD and margin >= MIN_MARGIN_TIER2 and ev['description_similarity'] >= TIER2_DESC_FLOOR and strong and not hard and not weak and not any_conflict and ev['project_token_overlap'] >= 35:
+        if 'different IDA' in warnings and ev['description_similarity'] < 90:
+            return 'Unmatched', 'Unmatched', (
+                f'IDA mismatch with insufficient description similarity for Tier 2 override '
+                f'(description_similarity={ev["description_similarity"]:.1f} < 90 required when IDA differs)'
+            )
+        return 'Tier 2', 'Provisional', ''
+
+    # --- Collect the actual first blocker for diagnostics ---
+    if any_conflict:
+        conflict_details = [w for w in warnings if
+                            'conflicting location number' in w or
+                            w == 'conflicting location' or
+                            w == 'conflicting project type']
+        reason = 'Conflicting field(s) detected: ' + '; '.join(conflict_details)
+    elif hard:
+        hard_hits = [w for w in warnings if w in ('different MP', 'different state', 'different constituency')]
+        reason = 'Hard entity mismatch: ' + ', '.join(hard_hits)
+    elif not strong:
+        weak_ctx = []
+        if ev['mp_similarity'] < STRONG_CONTEXT_THRESHOLD:
+            weak_ctx.append(f'mp_similarity={ev["mp_similarity"]:.1f}')
+        if ev['state_similarity'] < STRONG_CONTEXT_THRESHOLD:
+            weak_ctx.append(f'state_similarity={ev["state_similarity"]:.1f}')
+        if ev['constituency_similarity'] < STRONG_CONTEXT_THRESHOLD:
+            weak_ctx.append(f'constituency_similarity={ev["constituency_similarity"]:.1f}')
+        reason = f'Insufficient context strength (requires ≥{STRONG_CONTEXT_THRESHOLD}): ' + ', '.join(weak_ctx)
+    elif weak:
+        weak_parts = []
+        if ev['description_similarity'] < TIER2_DESC_FLOOR:
+            weak_parts.append(f'description_similarity={ev["description_similarity"]:.1f} < {TIER2_DESC_FLOOR} floor')
+        if ev['project_token_overlap'] < 25:
+            weak_parts.append(f'project_token_overlap={ev["project_token_overlap"]:.1f} < 25 floor')
+        reason = 'Weak description signal: ' + '; '.join(weak_parts)
+    elif score < TIER2_THRESHOLD:
+        reason = f'Score below Tier 2 threshold (score={score:.3f} < {TIER2_THRESHOLD})'
+    elif margin < MIN_MARGIN_TIER2:
+        reason = f'Score margin too small (margin={margin:.3f} < {MIN_MARGIN_TIER2} required)'
+    elif ev['project_token_overlap'] < 35:
+        reason = f'Token overlap below Tier 2 minimum (project_token_overlap={ev["project_token_overlap"]:.1f} < 35)'
+    else:
+        reason = f'Score/margin/tier conditions not met (score={score:.3f}, margin={margin:.3f})'
+    return 'Unmatched', 'Unmatched', reason
 
 def _build_indices(comp):
     entity=defaultdict(list); sc=defaultdict(list); state=defaultdict(list); work_ids=defaultdict(list); exact=defaultdict(list); token_index=defaultdict(list)
@@ -348,9 +408,14 @@ def match_records(rec_df,comp_df):
         byci={}
         for s,ev,w,source,ci in scored:
             if ci not in byci or s>byci[ci][0]:byci[ci]=(s,ev,w,source,ci)
-        ranked=sorted(byci.values(),key=lambda x:x[0],reverse=True);best=ranked[0];second=ranked[1][0] if len(ranked)>1 else 0.0;margin=best[0]-second;tier,conf=_tier(best[0],margin,best[1],best[2])
-        reason=(f'{best[3]}; description={best[1]["description_similarity"]:.1f}; mp={best[1]["mp_similarity"]:.1f}; constituency={best[1]["constituency_similarity"]:.1f}; state={best[1]["state_similarity"]:.1f}; ida={best[1]["ida_similarity"]:.1f}; category={best[1]["category_similarity"]:.1f}; amount={best[1]["amount_similarity"]:.1f}; timeline={best[1]["timeline_match_score"]:.1f}; token_overlap={best[1]["project_token_overlap"]:.1f}')
-        if best[2]:reason+='; warnings='+', '.join(best[2])
+        ranked=sorted(byci.values(),key=lambda x:x[0],reverse=True);best=ranked[0];second=ranked[1][0] if len(ranked)>1 else 0.0;margin=best[0]-second
+        tier,conf,rejection_reason=_tier(best[0],margin,best[1],best[2])
+        score_detail=(f'{best[3]}; description={best[1]["description_similarity"]:.1f}; mp={best[1]["mp_similarity"]:.1f}; constituency={best[1]["constituency_similarity"]:.1f}; state={best[1]["state_similarity"]:.1f}; ida={best[1]["ida_similarity"]:.1f}; category={best[1]["category_similarity"]:.1f}; amount={best[1]["amount_similarity"]:.1f}; timeline={best[1]["timeline_match_score"]:.1f}; token_overlap={best[1]["project_token_overlap"]:.1f}')
+        if best[2]:score_detail+='; warnings='+', '.join(best[2])
+        if tier=='Unmatched' and rejection_reason:
+            reason=f'[UNMATCHED REASON] {rejection_reason} || {score_detail}'
+        else:
+            reason=score_detail
         base.update({'completion_index':int(best[4]) if tier!='Unmatched' else -1,'match_score':round(best[0],3) if tier!='Unmatched' else 0.0,'match_tier':tier,'match_confidence':conf,'score_margin':round(margin,3),'best_candidate_index':int(best[4]),'best_candidate_score':round(best[0],3),'best_candidate_tier':tier,'match_reason':reason})
         results.append(base)
     out=pd.DataFrame(results)
@@ -359,5 +424,9 @@ def match_records(rec_df,comp_df):
         winners=accepted.sort_values(['completion_index','match_score'],ascending=[True,False]).drop_duplicates('completion_index');keep=set(zip(winners.recommendation_index,winners.completion_index))
         for idx,row in out.iterrows():
             if row.completion_index>=0 and (int(row.recommendation_index),int(row.completion_index)) not in keep:
-                out.loc[idx,['completion_index','match_score','match_tier','match_confidence']]=[-1,0.0,'Unmatched','Unmatched'];out.loc[idx,'match_reason']='Candidate was already assigned to a stronger recommendation match.'
+                # Preserve the original evidence in the unmatched reason so reviewers can see
+                # both WHY it was displaced and what scores the candidate had.
+                prior_reason=str(row.match_reason or '')
+                out.loc[idx,['completion_index','match_score','match_tier','match_confidence']]=[-1,0.0,'Unmatched','Unmatched']
+                out.loc[idx,'match_reason']=f'[UNMATCHED REASON] Candidate already assigned to a stronger recommendation (one-to-one matching) || {prior_reason}'
     return out

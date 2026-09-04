@@ -11,8 +11,30 @@ REVIEW_COLUMNS = [
     "recommendation_category", "completion_category", "recommendation_ida", "completion_ida",
     "recommended_amount", "final_amount", "timeline_match_score", "description_similarity", "mp_similarity",
     "constituency_similarity", "state_similarity", "ida_similarity", "category_similarity", "amount_similarity",
-    "project_token_overlap", "match_reason", "human_verdict", "human_notes",
+    "project_token_overlap", "match_reason", "unmatched_reason", "human_verdict", "human_notes",
 ]
+
+_UNMATCHED_TAG = "[UNMATCHED REASON]"
+
+
+def _extract_unmatched_reason(match_reason: str):
+    """
+    Parse a match_reason string that may contain the structured tag written by matching.py::
+
+        [UNMATCHED REASON] <human-readable-cause> || <score-evidence>
+
+    Returns (unmatched_reason, evidence_str).
+    If the tag is absent, returns ('', match_reason) so the full string is still shown.
+    """
+    s = str(match_reason or '')
+    if s.startswith(_UNMATCHED_TAG):
+        body = s[len(_UNMATCHED_TAG):].lstrip()
+        if ' || ' in body:
+            reason_part, evidence_part = body.split(' || ', 1)
+        else:
+            reason_part, evidence_part = body, ''
+        return reason_part.strip(), evidence_part.strip()
+    return '', s
 
 
 def _parse_reason(reason: str) -> dict:
@@ -88,13 +110,15 @@ def build_review_samples(matches: pd.DataFrame, recommendations: pd.DataFrame, c
                 "timeline_match_score":ev.get("timeline", ""),"description_similarity":ev.get("description", ""),"mp_similarity":ev.get("mp", ""),
                 "constituency_similarity":ev.get("constituency", ""),"state_similarity":ev.get("state", ""),"ida_similarity":ev.get("ida", ""),
                 "category_similarity":ev.get("category", ""),"amount_similarity":ev.get("amount", ""),"project_token_overlap":ev.get("token_overlap", ""),
-                "match_reason":m["match_reason"],"human_verdict":"","human_notes":"",
+                "match_reason":m["match_reason"],"unmatched_reason":"","human_verdict":"","human_notes":"",
             }); review_id+=1
     sampled=_sample_unmatched(matches,seed)
     for _, m in sampled.iterrows():
         rr=recommendations.iloc[int(m["recommendation_index"])]
         bi=int(m.get("best_candidate_index",-1))
         bc=completions.iloc[bi] if bi>=0 else None
+        unmatched_reason, evidence_str = _extract_unmatched_reason(m["match_reason"])
+        ev_unmatched = _parse_reason(evidence_str)
         rows.append({
             "review_id":review_id,"review_type":"unmatched","match_tier":"Unmatched","match_confidence":"Unmatched","match_score":0.0,
             "score_margin":m.get("score_margin",0),"recommendation_index":int(m["recommendation_index"]),"completion_index":-1,"best_candidate_index":bi,
@@ -103,9 +127,13 @@ def build_review_samples(matches: pd.DataFrame, recommendations: pd.DataFrame, c
             "recommendation_mp":_field(rr,"mp_name"),"completion_mp":"","best_candidate_mp":_field(bc,"mp_name") if bc is not None else "",
             "recommendation_state":_field(rr,"state"),"completion_state":"","recommendation_constituency":_field(rr,"constituency"),"completion_constituency":"",
             "recommendation_category":_field(rr,"category"),"completion_category":"","recommendation_ida":_field(rr,"ida"),"completion_ida":"",
-            "recommended_amount":_field(rr,"recommended_amount"),"final_amount":"","timeline_match_score":"","description_similarity":"","mp_similarity":"",
-            "constituency_similarity":"","state_similarity":"","ida_similarity":"","category_similarity":"","amount_similarity":"",
-            "project_token_overlap":"","match_reason":m["match_reason"],"human_verdict":"","human_notes":"",
+            "recommended_amount":_field(rr,"recommended_amount"),"final_amount":"",
+            "timeline_match_score":ev_unmatched.get("timeline",""),"description_similarity":ev_unmatched.get("description",""),
+            "mp_similarity":ev_unmatched.get("mp",""),"constituency_similarity":ev_unmatched.get("constituency",""),
+            "state_similarity":ev_unmatched.get("state",""),"ida_similarity":ev_unmatched.get("ida",""),
+            "category_similarity":ev_unmatched.get("category",""),"amount_similarity":ev_unmatched.get("amount",""),
+            "project_token_overlap":ev_unmatched.get("token_overlap",""),
+            "match_reason":m["match_reason"],"unmatched_reason":unmatched_reason,"human_verdict":"","human_notes":"",
         }); review_id+=1
 
     review=pd.DataFrame(rows, columns=REVIEW_COLUMNS)
@@ -140,7 +168,35 @@ def write_html(df: pd.DataFrame, path: Path) -> None:
     cards=[]
     for _, r in df.iterrows():
         if r.review_type == "unmatched":
-            evidence=f"<div class='warning'><b>Best rejected candidate</b><br>{html.escape(str(r.best_candidate_description))}<br><small>Score: {html.escape(str(r.best_candidate_score))}</small></div>"
+            # Retrieve the structured reason (populated by _extract_unmatched_reason in build_review_samples)
+            ur = str(r.get("unmatched_reason", "") or "")
+            if not ur:
+                # Fallback: parse live from match_reason (e.g. if df was loaded from CSV)
+                ur, _ = _extract_unmatched_reason(str(r.get("match_reason","") or ""))
+            reason_banner = (
+                f"<div class='unmatched-reason'>"
+                f"<b>UNMATCHED REASON</b><br>{html.escape(ur)}"
+                f"</div>"
+            ) if ur else ""
+            # Build a compact score grid from whatever evidence columns are available.
+            metrics=[]
+            for key,label in [
+                ("description_similarity","Description"),("mp_similarity","MP"),("constituency_similarity","Constituency"),
+                ("state_similarity","State"),("amount_similarity","Amount"),("project_token_overlap","Token overlap"),
+            ]:
+                val=r.get(key,"")
+                try:
+                    if val != "" and not pd.isna(val): metrics.append(f"<div class='metric'><span>{label}</span><b>{float(val):.1f}</b></div>")
+                except Exception:
+                    pass
+            score_grid = f"<div class='grid'>{''.join(metrics)}</div>" if metrics else ""
+            evidence=(
+                f"<div class='warning'><b>Best rejected candidate</b> &nbsp;"
+                f"<small>score={html.escape(str(r.best_candidate_score))}</small><br>"
+                f"{html.escape(str(r.best_candidate_description))}</div>"
+                f"{score_grid}"
+                f"{reason_banner}"
+            )
         else:
             metrics=[]
             for key,label in [
@@ -164,6 +220,6 @@ def write_html(df: pd.DataFrame, path: Path) -> None:
         </article>"""
         cards.append(card)
     doc=f"""<!doctype html><html><head><meta charset='utf-8'><title>MPLADS Match Review</title>
-    <style>body{{font-family:Arial,sans-serif;max-width:1100px;margin:25px auto;background:#f4f5f7;color:#222;padding:0 15px}}h1{{margin-bottom:5px}}.note{{color:#555}}.card{{background:#fff;border:1px solid #ddd;border-radius:12px;margin:18px 0;padding:20px;box-shadow:0 2px 6px rgba(0,0,0,.04)}}.top{{display:flex;justify-content:space-between;border-bottom:1px solid #eee;padding-bottom:10px}}.tier{{font-weight:700}}.meta{{color:#667085;font-size:14px;margin-bottom:13px}}.grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:15px 0}}.metric{{background:#f7f8fa;padding:8px;border-radius:7px;display:flex;justify-content:space-between}}.reason,.warning{{background:#f7f8fa;padding:12px;border-radius:8px;font-size:14px}}.warning{{background:#fff4e5}}small{{color:#667085}}@media(max-width:700px){{.grid{{grid-template-columns:repeat(2,1fr)}}}}</style>
+    <style>body{{font-family:Arial,sans-serif;max-width:1100px;margin:25px auto;background:#f4f5f7;color:#222;padding:0 15px}}h1{{margin-bottom:5px}}.note{{color:#555}}.card{{background:#fff;border:1px solid #ddd;border-radius:12px;margin:18px 0;padding:20px;box-shadow:0 2px 6px rgba(0,0,0,.04)}}.top{{display:flex;justify-content:space-between;border-bottom:1px solid #eee;padding-bottom:10px}}.tier{{font-weight:700}}.meta{{color:#667085;font-size:14px;margin-bottom:13px}}.grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:15px 0}}.metric{{background:#f7f8fa;padding:8px;border-radius:7px;display:flex;justify-content:space-between}}.reason,.warning{{background:#f7f8fa;padding:12px;border-radius:8px;font-size:14px}}.warning{{background:#fff4e5}}.unmatched-reason{{background:#fdecea;border:2px solid #e53e3e;border-radius:8px;padding:12px;margin-top:10px;font-size:14px;font-weight:500;color:#c0392b}}small{{color:#667085}}@media(max-width:700px){{.grid{{grid-template-columns:repeat(2,1fr)}}}}</style>
     </head><body><h1>MPLADS Match Review</h1><p class='note'>Human review aid. A match is a linkage assessment, not a fraud finding.</p>{''.join(cards)}</body></html>"""
     Path(path).write_text(doc, encoding="utf-8")
