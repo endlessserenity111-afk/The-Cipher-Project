@@ -15,6 +15,120 @@ STOP_WORDS={
     'construction','providing','development','improvement','work','works','road','roads','village','at','of','to','from','in','the','and','for','near','under','with','gp','mandal','district','building','installation','community','public','facility','street','system','provision','creation','developmental','strengthening','ward','house'
 }
 
+# Generic words that appear in project descriptions but are NOT place names.
+# Used by the place-name conflict detector to avoid treating infra nouns as locations.
+_PLACE_GENERIC = {
+    'construction','providing','development','improvement','work','works','road','roads',
+    'village','at','of','to','from','in','the','and','for','near','under','with','gp',
+    'mandal','district','building','installation','community','public','facility','street',
+    'system','provision','creation','developmental','strengthening','ward','house',
+    'cc','rcc','internal','external','approach','main','side','north','south','east','west',
+    'bore','borewell','motor','pump','tank','drain','drainage','wall','compound','slab',
+    'pipe','pipeline','lights','light','fixture','fixtures','power','electrical','solar',
+    'renovation','repair','repairs','urgent','urgent','colony','sc','st','bc','oc','nagar',
+    'hall','centre','center','activity','multipurpose','platform','meeting','room',
+    'open','cover','culvert','bridge','retaining','protection','boundary','gate','fencing',
+    'gravel','cement','concrete','precast','interlock','pavement','footpath','pathway',
+    'drinking','water','plant','mineral','overhead','ohsr','reservoir','sump','tap',
+    'toilet','bathroom','parking','space','stadium','ground','burial','cemetery','park',
+    'school','hospital','library','church','temple','mosque','shrine','gurudwara',
+    'anganwadi','sachivalayam','panchayat','grama','gram','sabha','bhavan','bhawan',
+    'phase','part','reach','section','km','meters','ltr','liter','capacity',
+    'no','number','ward','plot','survey','block','sector','door','flat','unit','house',
+    'formation','laying','excavation','fixing','installation','supply','purchase',
+    'street','municipal','municipality','corporation','town','city','area','region',
+    'colony','layout','extension','junction','cross','circle','bus','shelter','stop',
+    'approach','access','entry','exit','link','bypass','flyover','overbridge',
+    'mr','dr','sri','smt','km','shri',
+}
+
+# Project-type synonym groups: each inner list = set of terms meaning the same infra type.
+# Order matters for display only; sets are compared by intersection.
+_PROJECT_TYPE_GROUPS = [
+    {'ohsr', 'overhead', 'reservoir', 'wr', 'water tank', 'watertank'},
+    {'community hall', 'community centre', 'community center', 'cc hall'},
+    {'under drainage', 'underground drainage', 'ug drainage', 'sewerage', 'sewage', 'ud system'},
+    {'cc road', 'rcc road', 'cement road', 'concrete road'},
+    {'gravel road', 'mud road', 'wbm road'},
+    {'burial ground', 'graveyard', 'cemetery', 'burial'},
+    {'bore well', 'borewell', 'bore motor'},
+    {'pipeline', 'pipe line', 'water pipeline'},
+    {'street light', 'streetlight', 'street lighting'},
+    {'compound wall', 'boundary wall'},
+    {'retaining wall', 'protection wall'},
+    {'culvert', 'bridge', 'bailey bridge'},
+    {'drain', 'drainage', 'cc drain', 'open drain'},
+    {'bus shelter', 'bus stop', 'bus stand'},
+    {'stadium', 'sports', 'playground'},
+    {'toilet', 'sanitation', 'latrine'},
+    {'anganwadi'},
+    {'school', 'vidyalaya', 'college'},
+    {'hospital', 'clinic', 'dispensary'},
+]
+
+def _normalise_for_type(text: str) -> str:
+    """Lower-case, collapse whitespace, keep only alpha."""
+    return re.sub(r'\s+', ' ', re.sub(r'[^a-z\s]', ' ', str(text or '').lower())).strip()
+
+def _detect_project_type_conflict(a: str, b: str) -> bool:
+    """
+    Return True if `a` and `b` contain terms from DIFFERENT non-overlapping project-type groups.
+    Groups present in BOTH descriptions are excluded before comparing — this ensures a compound
+    structure (e.g. 'compound wall') shared by both doesn't mask a genuine conflict between
+    the primary objects (e.g. OHSR tank vs community hall).
+    """
+    na, nb = _normalise_for_type(a), _normalise_for_type(b)
+    groups_a, groups_b = set(), set()
+    for gi, grp in enumerate(_PROJECT_TYPE_GROUPS):
+        for term in grp:
+            if term in na:
+                groups_a.add(gi)
+            if term in nb:
+                groups_b.add(gi)
+    # Remove groups that appear in both (shared context, not a conflict).
+    shared = groups_a & groups_b
+    exclusive_a = groups_a - shared
+    exclusive_b = groups_b - shared
+    # Conflict: each side has exclusive groups and none of those overlap.
+    if exclusive_a and exclusive_b and exclusive_a.isdisjoint(exclusive_b):
+        return True
+    return False
+
+
+def _extract_place_tokens(text: str) -> frozenset:
+    """
+    Extract meaningful location-name tokens from a work description.
+    Handles both mixed-case and ALL-CAPS text.
+    Returns frozenset of lowercase tokens.
+    """
+    orig = str(text or '')
+    # If the text is mostly uppercase, title-case it first so regex can find proper nouns.
+    upper_ratio = sum(1 for c in orig if c.isupper()) / max(1, sum(1 for c in orig if c.isalpha()))
+    if upper_ratio > 0.6:
+        orig = orig.title()
+    caps = re.findall(r'\b([A-Z][a-z]{2,})\b', orig)
+    result = frozenset(w.lower() for w in caps if w.lower() not in _PLACE_GENERIC)
+    return result
+
+
+def _detect_place_conflict(a_desc: str, b_desc: str) -> bool:
+    """
+    Return True if both descriptions have specific place tokens AND each side has at
+    least one unique place name not shared by the other (symmetric-difference check).
+    Requires each side to have >= 1 non-shared token, and at least one side has >= 2
+    total tokens to avoid false-positives on ultra-short descriptions.
+    """
+    ta = _extract_place_tokens(a_desc)
+    tb = _extract_place_tokens(b_desc)
+    if not ta or not tb:
+        return False
+    unique_a = ta - tb  # tokens only in a
+    unique_b = tb - ta  # tokens only in b
+    # Both sides must have at least one unique place name not shared by the other.
+    if unique_a and unique_b:
+        return True
+    return False
+
 def _ratio(a,b):
     if not a or not b:return 0.0
     return float(fuzz.token_set_ratio(str(a),str(b)))
@@ -112,6 +226,16 @@ def _score(rec,comp):
             score-=PENALTY_ENTITY_MISMATCH
             kw_label=_LOC_KW_GROUPS[gi][0]
             warnings.append(f'conflicting location number ({kw_label}: {sorted(rec_loc[gi])} vs {sorted(comp_loc[gi])})')
+    # Location place-name conflict: proper nouns in both descriptions are completely disjoint.
+    rec_orig=rec.get('work_description','') or rec.get('work_norm','')
+    comp_orig=comp.get('work_description','') or comp.get('work_norm','')
+    if _detect_place_conflict(rec_orig, comp_orig):
+        score-=PENALTY_ENTITY_MISMATCH
+        warnings.append('conflicting location')
+    # Project-type conflict: descriptions clearly refer to different infrastructure types.
+    if _detect_project_type_conflict(rec_orig, comp_orig):
+        score-=PENALTY_ENTITY_MISMATCH
+        warnings.append('conflicting project type')
     ev={'description_similarity':round(desc,2),'mp_similarity':round(mp,2),'constituency_similarity':round(constituency,2),'state_similarity':round(state,2),'ida_similarity':round(ida,2),'category_similarity':round(category,2),'amount_similarity':round(amount,2),'timeline_match_score':round(timeline,2),'project_token_overlap':round(anchors,2)}
     return max(0.0,float(score)),ev,warnings
 
@@ -127,14 +251,18 @@ def _tier(score,margin,ev,warnings):
         return 'Unmatched', 'Unmatched'
     strong=ev['mp_similarity']>=STRONG_CONTEXT_THRESHOLD and ev['state_similarity']>=STRONG_CONTEXT_THRESHOLD and ev['constituency_similarity']>=STRONG_CONTEXT_THRESHOLD
     hard=any(w in warnings for w in ('different MP','different state','different constituency'))
-    # Also treat conflicting location numbers as a hard blocker for both tiers.
-    loc_conflict=any('conflicting location number' in w for w in warnings)
+    # Hard blockers for both tiers: any kind of confirmed location or project-type conflict.
+    loc_number_conflict=any('conflicting location number' in w for w in warnings)
+    loc_name_conflict='conflicting location' in warnings
+    proj_type_conflict='conflicting project type' in warnings
+    any_conflict=loc_number_conflict or loc_name_conflict or proj_type_conflict
     weak=ev['description_similarity']<TIER2_DESC_FLOOR or ev['project_token_overlap']<25
-    if score>=TIER1_THRESHOLD and margin>=MIN_MARGIN_TIER1 and ev['description_similarity']>=TIER1_DESC_FLOOR and strong and not hard and not weak and not loc_conflict:
+    if score>=TIER1_THRESHOLD and margin>=MIN_MARGIN_TIER1 and ev['description_similarity']>=TIER1_DESC_FLOOR and strong and not hard and not weak and not any_conflict:
         if 'different IDA' in warnings and ev['description_similarity']<96:return 'Unmatched','Unmatched'
         if 'different category' in warnings and ev['description_similarity']<95:return 'Unmatched','Unmatched'
         return 'Tier 1','Verified'
-    if score>=TIER2_THRESHOLD and margin>=MIN_MARGIN_TIER2 and ev['description_similarity']>=TIER2_DESC_FLOOR and strong and not hard and not weak and not loc_conflict:
+    # Tier 2: tighter — requires no conflict warnings and slightly stricter token overlap.
+    if score>=TIER2_THRESHOLD and margin>=MIN_MARGIN_TIER2 and ev['description_similarity']>=TIER2_DESC_FLOOR and strong and not hard and not weak and not any_conflict and ev['project_token_overlap']>=35:
         if 'different IDA' in warnings and ev['description_similarity']<90:return 'Unmatched','Unmatched'
         return 'Tier 2','Provisional'
     return 'Unmatched','Unmatched'
