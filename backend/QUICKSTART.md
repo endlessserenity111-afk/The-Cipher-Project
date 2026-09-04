@@ -1,37 +1,14 @@
-# Quick start
-
-From the repo root:
+# Quick Start
 
 ```bash
-python3 -m venv .venv
+cd backend
 source .venv/bin/activate
-pip install -r requirements.txt
+pytest -q
+python run_pipeline.py --limit 100
+python tools/review_matches.py --all
+python tools/run_review_metrics.py
 ```
 
-Put the four real CSVs into `data/raw/` with the names used in `config.py`.
+Open `data/outputs/review/match_review.html` in Chrome for a visual review page.
 
-### Fast smoke test
-
-```bash
-python run_pipeline.py --limit 1000
-```
-
-### Larger validation run
-
-```bash
-python run_pipeline.py --limit 5000
-```
-
-### Full run
-
-```bash
-python run_pipeline.py
-```
-
-All outputs land in `data/outputs/`.
-
-### Unit tests
-
-```bash
-python -m pytest -q
-```
+For a full run, use `python run_pipeline.py` only after the 100/1000/5000 row runs look sensible.

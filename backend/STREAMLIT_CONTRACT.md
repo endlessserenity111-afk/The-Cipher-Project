@@ -1,43 +1,47 @@
-# Streamlit backend contract
+# Streamlit contract
 
-The frontend should **not calculate fraud/anomaly logic**. It should read the exported backend files.
+The frontend should read only generated outputs, not raw CSVs.
 
-## Main project table
+Main project file: `data/outputs/project_risk_scores.csv`
 
-`data/outputs/project_risk_scores.csv`
+Important columns:
+- recommendation_work_id
+- completion_work_id
+- mp_name
+- constituency
+- state
+- category
+- recommended_amount
+- final_amount
+- amount_difference_pct
+- days_to_completion
+- match_score
+- match_tier
+- match_confidence
+- cost_percentile
+- duration_percentile
+- duration_ratio_to_peer_median
+- ml_anomaly_score
+- ml_anomaly_flag
+- risk_score
+- risk_level
+- risk_reasons
 
-Key fields:
-- `recommendation_row_id` — unique row identifier in the source recommendation table
-- `recommendation_work_id` — source Work ID; not assumed globally unique across tables
-- `completion_work_id` — source completed-work Work ID; not assumed globally unique
-- `mp_name`, `constituency`, `state`, `category`, `ida`
-- `recommended_amount`, `final_amount`, `amount_difference`, `amount_difference_pct`
-- `recommendation_date`, `completion_date`, `days_to_completion`
-- `match_score`, `match_tier`, `match_confidence`, `score_margin`, `match_reason`
-- `amount_difference_pct_iqr_flag`, `days_to_completion_iqr_flag`
-- `ml_anomaly_score`, `ml_anomaly_flag`
-- `risk_score`, `risk_level`, `risk_reasons`
+MP financial file: `data/outputs/mp_risk_indicators.csv`
 
-## MP financial indicators
+Important MP columns:
+- mp_name
+- constituency
+- state
+- top_vendor
+- top_vendor_share_pct
+- payment_mismatch_groups
+- max_payment_completion_difference_pct
+- reconciliation_difference_pct
+- mp_risk_score
+- mp_risk_level
+- mp_risk_reasons
 
-`data/outputs/mp_risk_indicators.csv`
-
-Use for MP-level cards/tables:
-- top vendor and share
-- total paid vs completed value
-- mismatch group count
-- MP risk score/level/reasons
-
-## Rollups
-
-- `state_rollup.csv`
-- `category_rollup.csv`
-- `constituency_rollup.csv`
-
-## Matching diagnostics
-
-`match_results.csv` contains all recommendations and their final linkage state.
-
-## Safety/interpretation
-
-The UI should call the result an **anomaly/risk assessment**. Do not label a row as proven fraud. Tier 2 is provisional evidence and should be visibly differentiated from Tier 1.
+Safety language in UI:
+"Risk indicator" / "Anomaly detected" / "May require verification"
+Avoid claiming that the system proves fraud.

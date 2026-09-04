@@ -1,9 +1,10 @@
+.venv/
 __pycache__/
 *.pyc
-.venv/
+.pytest_cache/
 .env
 .DS_Store
+
+data/raw/*.csv
 data/processed/*
 data/outputs/*
-# Keep raw government-derived files out of git unless your team explicitly wants to version them.
-data/raw/*.csv

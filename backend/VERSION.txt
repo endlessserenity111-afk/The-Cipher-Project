@@ -1,0 +1,10 @@
+MPLADS SIH26102 Backend - Final Candidate v1.0
+
+Validated in this environment:
+- pytest: 6 passed
+- preflight: passed on the four supplied real MPLADS CSVs
+- 100-recommendation end-to-end pipeline: completed successfully
+- Tier 1/Tier 2/Unmatched review sample generation: working
+- human review CLI modes: available
+
+Important: full-dataset runtime has not been claimed as a completed validation run in this environment. Run 1,000 then 5,000 then full locally before the final SIH demo.
