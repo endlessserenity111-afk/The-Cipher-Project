@@ -1,9 +1,15 @@
+# Python
 __pycache__/
 *.pyc
+.pytest_cache/
 .venv/
 .env
+
+# OS
 .DS_Store
-data/processed/*
-data/outputs/*
-# Keep raw government-derived files out of git unless your team explicitly wants to version them.
-data/raw/*.csv
+
+# Project data
+backend/data/raw/*.csv
+backend/data/processed/
+backend/data/outputs/*
+!backend/data/outputs/.gitkeep

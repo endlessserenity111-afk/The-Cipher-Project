@@ -1,21 +1,11 @@
-# Untitled Cipher Project - SIH26102
+# The Cipher Project - SIH26102
 
-This package contains the backend foundation for the MPLADS anomaly/risk analysis system.
+This repository contains the MPLADS anomaly and risk analysis system for SIH26102.
 
-## Where things go
-- `backend/` = backend code and data pipeline
-- `frontend/` = reserved for the Streamlit frontend
-- `backend/data/raw/` = original source CSVs
-- `backend/data/processed/` = intermediate files
-- `backend/data/outputs/` = files consumed by Streamlit
+## Project Structure
+- `backend/` - The core analytical pipeline, matching engine, and data models. (See `backend/README.md` for quickstart)
+- `frontend/` - The user-facing Streamlit application.
+- `backend/docs/` - Detailed documentation for architecture and data contracts.
 
-## Run
-```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python run_pipeline.py --limit 1000
-```
-
-Then increase to 5000 and eventually run without `--limit` after validation.
+## Getting Started
+To get started with the data pipeline, please follow the instructions in [backend/README.md](backend/README.md).
