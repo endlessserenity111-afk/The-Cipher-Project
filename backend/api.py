@@ -1,11 +1,19 @@
 import json
 import os
 import pandas as pd
+import numpy as np
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
+import groq
 
+load_dotenv()
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+groq_client = groq.Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+
+# In-memory cache for explanations
+explanation_cache = {}
 app = FastAPI(title="MPLADS API")
 
 # Enable CORS for all origins
@@ -37,10 +45,10 @@ def read_csv(filename: str) -> pd.DataFrame:
     try:
         df = pd.read_csv(path)
         # Replace NaN/NaT values with None for JSON serialization
-        df = df.where(pd.notnull(df), None)
+        df = df.replace({np.nan: None})
         return df
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reading {filename}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error reading {filename}: {str(e)}") from e
 
 @app.get("/")
 def root():
@@ -152,3 +160,56 @@ def get_state_rollup():
 def get_category_rollup():
     df = read_csv("category_rollup.csv")
     return df.to_dict(orient="records")
+
+@app.get("/api/projects/{recommendation_row_id}/explain")
+def get_project_explanation(recommendation_row_id: str):
+    if recommendation_row_id in explanation_cache:
+        return {"recommendation_row_id": recommendation_row_id, "explanation": explanation_cache[recommendation_row_id]}
+
+    if not groq_client:
+        return {"recommendation_row_id": recommendation_row_id, "explanation": "Explanation temporarily unavailable — see risk factors above (API key not configured)."}
+    
+    # Get the project row
+    try:
+        project = get_project_detail(recommendation_row_id)
+    except HTTPException as exc:
+        raise HTTPException(status_code=404, detail=f"Project with recommendation_row_id {recommendation_row_id} not found.") from exc
+
+    # Build prompt with ONLY already-computed fields
+    prompt = f"""You are explaining an already-computed risk assessment for a government project to a non-technical official. Do NOT invent any new risk factors or numbers — only explain and contextualize the ones given below. Write 2-4 sentences in plain English.
+
+Project Details:
+- Work Description: {project.get('work_description', 'N/A')}
+- MP Name: {project.get('mp_name', 'N/A')}
+- State: {project.get('state', 'N/A')}
+- Category: {project.get('category', 'N/A')}
+- Recommended Amount: {project.get('recommended_amount', 'N/A')}
+- Final Amount: {project.get('final_amount', 'N/A')}
+- Amount Difference %: {project.get('amount_difference_pct', 'N/A')}
+- Days to Completion: {project.get('days_to_completion', 'N/A')}
+- Has Images: {project.get('has_images', False)}
+
+Risk Assessment:
+- Risk Score: {project.get('risk_score', 'N/A')}
+- Risk Level: {project.get('risk_level', 'N/A')}
+- ML Anomaly Flag: {project.get('ml_anomaly_flag', False)}
+- Risk Reasons (Evidence): {project.get('risk_reasons', 'None')}
+
+Please provide the 2-4 sentence explanation now:
+"""
+
+    try:
+        completion = groq_client.chat.completions.create(
+            model="groq/compound",
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=150,
+        )
+        explanation = completion.choices[0].message.content.strip()
+        explanation_cache[recommendation_row_id] = explanation
+        return {"recommendation_row_id": recommendation_row_id, "explanation": explanation}
+    except Exception as e:
+        print(f"Groq API Error: {e}")
+        return {"recommendation_row_id": recommendation_row_id, "explanation": "Explanation temporarily unavailable — see risk factors above."}
